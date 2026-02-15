@@ -226,3 +226,282 @@ def tools_to_openai(tool_schemas: list) -> list:
 #   {"role": "assistant", "content": "text", "tool_calls": [
 #       {"id": "...", "name": "...", "input": {...}}
 #   ]}
+#   {"role": "tool", "tool_call_id": "...", "name": "...", "content": "..."}
+
+def messages_to_anthropic(messages: list) -> list:
+    """Convert neutral messages → Anthropic API format."""
+    result = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        role = m["role"]
+
+        if role == "user":
+            result.append({"role": "user", "content": m["content"]})
+            i += 1
+
+        elif role == "assistant":
+            blocks = []
+            text = m.get("content", "")
+            if text:
+                blocks.append({"type": "text", "text": text})
+            for tc in m.get("tool_calls", []):
+                blocks.append({
+                    "type":  "tool_use",
+                    "id":    tc["id"],
+                    "name":  tc["name"],
+                    "input": tc["input"],
+                })
+            result.append({"role": "assistant", "content": blocks})
+            i += 1
+
+        elif role == "tool":
+            # Collect consecutive tool results into one user message
+            tool_blocks = []
+            while i < len(messages) and messages[i]["role"] == "tool":
+                t = messages[i]
+                tool_blocks.append({
+                    "type":        "tool_result",
+                    "tool_use_id": t["tool_call_id"],
+                    "content":     t["content"],
+                })
+                i += 1
+            result.append({"role": "user", "content": tool_blocks})
+
+        else:
+            i += 1
+
+    return result
+
+
+def messages_to_openai(messages: list) -> list:
+    """Convert neutral messages → OpenAI API format."""
+    result = []
+    for m in messages:
+        role = m["role"]
+
+        if role == "user":
+            result.append({"role": "user", "content": m["content"]})
+
+        elif role == "assistant":
+            msg: dict = {"role": "assistant", "content": m.get("content") or None}
+            tcs = m.get("tool_calls", [])
+            if tcs:
+                msg["tool_calls"] = []
+                for tc in tcs:
+                    tc_msg = {
+                        "id":   tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name":      tc["name"],
+                            "arguments": json.dumps(tc["input"], ensure_ascii=False),
+                        },
+                    }
+                    # Pass through provider-specific fields (e.g. Gemini thought_signature)
+                    if tc.get("extra_content"):
+                        tc_msg["extra_content"] = tc["extra_content"]
+                    msg["tool_calls"].append(tc_msg)
+            result.append(msg)
+
+        elif role == "tool":
+            result.append({
+                "role":         "tool",
+                "tool_call_id": m["tool_call_id"],
+                "content":      m["content"],
+            })
+
+    return result
+
+
+# ── Streaming adapters ─────────────────────────────────────────────────────
+
+class TextChunk:
+    def __init__(self, text): self.text = text
+
+class ThinkingChunk:
+    def __init__(self, text): self.text = text
+
+class AssistantTurn:
+    """Completed assistant turn with text + tool_calls."""
+    def __init__(self, text, tool_calls, in_tokens, out_tokens):
+        self.text        = text
+        self.tool_calls  = tool_calls   # list of {id, name, input}
+        self.in_tokens   = in_tokens
+        self.out_tokens  = out_tokens
+
+
+def stream_anthropic(
+    api_key: str,
+    model: str,
+    system: str,
+    messages: list,
+    tool_schemas: list,
+    config: dict,
+) -> Generator:
+    """Stream from Anthropic API. Yields TextChunk/ThinkingChunk, then AssistantTurn."""
+    import anthropic as _ant
+    client = _ant.Anthropic(api_key=api_key)
+
+    kwargs = {
+        "model":      model,
+        "max_tokens": config.get("max_tokens", 8192),
+        "system":     system,
+        "messages":   messages_to_anthropic(messages),
+        "tools":      tool_schemas,
+    }
+    if config.get("thinking"):
+        kwargs["thinking"] = {
+            "type":          "enabled",
+            "budget_tokens": config.get("thinking_budget", 10000),
+        }
+
+    tool_calls = []
+    text       = ""
+
+    with client.messages.stream(**kwargs) as stream:
+        for event in stream:
+            etype = getattr(event, "type", None)
+            if etype == "content_block_delta":
+                delta = event.delta
+                dtype = getattr(delta, "type", None)
+                if dtype == "text_delta":
+                    text += delta.text
+                    yield TextChunk(delta.text)
+                elif dtype == "thinking_delta":
+                    yield ThinkingChunk(delta.thinking)
+
+        final = stream.get_final_message()
+        for block in final.content:
+            if block.type == "tool_use":
+                tool_calls.append({
+                    "id":    block.id,
+                    "name":  block.name,
+                    "input": block.input,
+                })
+
+        yield AssistantTurn(
+            text, tool_calls,
+            final.usage.input_tokens,
+            final.usage.output_tokens,
+        )
+
+
+def stream_openai_compat(
+    api_key: str,
+    base_url: str,
+    model: str,
+    system: str,
+    messages: list,
+    tool_schemas: list,
+    config: dict,
+) -> Generator:
+    """Stream from any OpenAI-compatible API. Yields TextChunk, then AssistantTurn."""
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key or "dummy", base_url=base_url)
+
+    oai_messages = [{"role": "system", "content": system}] + messages_to_openai(messages)
+
+    kwargs: dict = {
+        "model":    model,
+        "messages": oai_messages,
+        "stream":   True,
+    }
+    if tool_schemas and not config.get("no_tools"):
+        kwargs["tools"] = tools_to_openai(tool_schemas)
+        # "auto" requires vLLM --enable-auto-tool-choice; omit if server doesn't support it
+        if not config.get("disable_tool_choice"):
+            kwargs["tool_choice"] = "auto"
+    if config.get("max_tokens"):
+        kwargs["max_tokens"] = config["max_tokens"]
+
+    text          = ""
+    tool_buf: dict = {}   # index → {id, name, args_str}
+    in_tok = out_tok = 0
+
+    stream = client.chat.completions.create(**kwargs)
+    for chunk in stream:
+        if not chunk.choices:
+            # usage-only chunk (some providers send this last)
+            if hasattr(chunk, "usage") and chunk.usage:
+                in_tok  = chunk.usage.prompt_tokens
+                out_tok = chunk.usage.completion_tokens
+            continue
+
+        choice = chunk.choices[0]
+        delta  = choice.delta
+
+        if delta.content:
+            text += delta.content
+            yield TextChunk(delta.content)
+
+        if delta.tool_calls:
+            for tc in delta.tool_calls:
+                idx = tc.index
+                if idx not in tool_buf:
+                    tool_buf[idx] = {"id": "", "name": "", "args": "", "extra_content": None}
+                if tc.id:
+                    tool_buf[idx]["id"] = tc.id
+                if tc.function:
+                    if tc.function.name:
+                        tool_buf[idx]["name"] += tc.function.name
+                    if tc.function.arguments:
+                        tool_buf[idx]["args"] += tc.function.arguments
+                # Capture extra_content (e.g. Gemini thought_signature)
+                extra = getattr(tc, "extra_content", None)
+                if extra:
+                    tool_buf[idx]["extra_content"] = extra
+
+        # Some providers include usage in the last chunk
+        if hasattr(chunk, "usage") and chunk.usage:
+            in_tok  = chunk.usage.prompt_tokens  or in_tok
+            out_tok = chunk.usage.completion_tokens or out_tok
+
+    tool_calls = []
+    for idx in sorted(tool_buf):
+        v = tool_buf[idx]
+        try:
+            inp = json.loads(v["args"]) if v["args"] else {}
+        except json.JSONDecodeError:
+            inp = {"_raw": v["args"]}
+        tc_entry = {"id": v["id"] or f"call_{idx}", "name": v["name"], "input": inp}
+        if v.get("extra_content"):
+            tc_entry["extra_content"] = v["extra_content"]
+        tool_calls.append(tc_entry)
+
+    yield AssistantTurn(text, tool_calls, in_tok, out_tok)
+
+
+def stream(
+    model: str,
+    system: str,
+    messages: list,
+    tool_schemas: list,
+    config: dict,
+) -> Generator:
+    """
+    Unified streaming entry point.
+    Auto-detects provider from model string.
+    Yields: TextChunk | ThinkingChunk | AssistantTurn
+    """
+    provider_name = detect_provider(model)
+    model_name    = bare_model(model)
+    prov          = PROVIDERS.get(provider_name, PROVIDERS["openai"])
+    api_key       = get_api_key(provider_name, config)
+
+    if prov["type"] == "anthropic":
+        yield from stream_anthropic(api_key, model_name, system, messages, tool_schemas, config)
+    else:
+        import os as _os
+        if provider_name == "custom":
+            base_url = (config.get("custom_base_url")
+                        or _os.environ.get("CUSTOM_BASE_URL", ""))
+            if not base_url:
+                raise ValueError(
+                    "custom provider requires a base_url. "
+                    "Set CUSTOM_BASE_URL env var or run: /config custom_base_url=http://..."
+                )
+        else:
+            base_url = prov.get("base_url", "https://api.openai.com/v1")
+        yield from stream_openai_compat(
+            api_key, base_url, model_name, system, messages, tool_schemas, config
+        )
