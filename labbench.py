@@ -344,3 +344,428 @@ def cmd_load(args: str, state, _config) -> bool:
     state.total_output_tokens = data.get("total_output_tokens", 0)
     ok(f"Session loaded from {path} ({len(state.messages)} messages)")
     return True
+
+def cmd_resume(args: str, state, _config) -> bool:
+    from config import MR_SESSION_DIR
+
+    if not args.strip():
+        path = MR_SESSION_DIR / "session_latest.json"
+        if not path.exists():
+            info("No auto-saved sessions found.")
+            return True
+    else:
+        fname = args.strip()
+        path = Path(fname) if "/" in fname else MR_SESSION_DIR / fname
+
+    if not path.exists():
+        err(f"File not found: {path}")
+        return True
+
+    data = json.loads(path.read_text())
+    state.messages = data.get("messages", [])
+    state.turn_count = data.get("turn_count", 0)
+    state.total_input_tokens = data.get("total_input_tokens", 0)
+    state.total_output_tokens = data.get("total_output_tokens", 0)
+    ok(f"Session loaded from {path} ({len(state.messages)} messages)")
+    return True
+
+def cmd_history(_args: str, state, _config) -> bool:
+    if not state.messages:
+        info("(empty conversation)")
+        return True
+    for i, m in enumerate(state.messages):
+        role = clr(m["role"].upper(), "bold",
+                   "cyan" if m["role"] == "user" else "green")
+        content = m["content"]
+        if isinstance(content, str):
+            print(f"[{i}] {role}: {content[:200]}")
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    btype = block.get("type", "")
+                else:
+                    btype = getattr(block, "type", "")
+                if btype == "text":
+                    text = block.get("text", "") if isinstance(block, dict) else block.text
+                    print(f"[{i}] {role}: {text[:200]}")
+                elif btype == "tool_use":
+                    name = block.get("name", "") if isinstance(block, dict) else block.name
+                    print(f"[{i}] {role}: [tool_use: {name}]")
+                elif btype == "tool_result":
+                    cval = block.get("content", "") if isinstance(block, dict) else block.content
+                    print(f"[{i}] {role}: [tool_result: {str(cval)[:100]}]")
+    return True
+
+def cmd_context(_args: str, state, config) -> bool:
+    import anthropic
+    # Rough token estimate: 4 chars ≈ 1 token
+    msg_chars = sum(
+        len(str(m.get("content", ""))) for m in state.messages
+    )
+    est_tokens = msg_chars // 4
+    info(f"Messages:         {len(state.messages)}")
+    info(f"Estimated tokens: ~{est_tokens:,}")
+    info(f"Model:            {config['model']}")
+    info(f"Max tokens:       {config['max_tokens']:,}")
+    return True
+
+def cmd_cost(_args: str, state, config) -> bool:
+    from config import calc_cost
+    cost = calc_cost(config["model"],
+                     state.total_input_tokens,
+                     state.total_output_tokens)
+    info(f"Input tokens:  {state.total_input_tokens:,}")
+    info(f"Output tokens: {state.total_output_tokens:,}")
+    info(f"Est. cost:     ${cost:.4f} USD")
+    return True
+
+def cmd_verbose(_args: str, _state, config) -> bool:
+    config["verbose"] = not config.get("verbose", False)
+    state_str = "ON" if config["verbose"] else "OFF"
+    ok(f"Verbose mode: {state_str}")
+    return True
+
+def cmd_thinking(_args: str, _state, config) -> bool:
+    config["thinking"] = not config.get("thinking", False)
+    state_str = "ON" if config["thinking"] else "OFF"
+    ok(f"Extended thinking: {state_str}")
+    return True
+
+def cmd_permissions(args: str, _state, config) -> bool:
+    from config import save_config
+    modes = ["auto", "accept-all", "manual"]
+    if not args.strip():
+        info(f"Permission mode: {config.get('permission_mode','auto')}")
+        info(f"Available modes: {', '.join(modes)}")
+    else:
+        m = args.strip()
+        if m not in modes:
+            err(f"Unknown mode: {m}. Choose: {', '.join(modes)}")
+        else:
+            config["permission_mode"] = m
+            save_config(config)
+            ok(f"Permission mode set to: {m}")
+    return True
+
+def cmd_cwd(args: str, _state, _config) -> bool:
+    if not args.strip():
+        info(f"Working directory: {os.getcwd()}")
+    else:
+        p = args.strip()
+        try:
+            os.chdir(p)
+            ok(f"Changed directory to: {os.getcwd()}")
+        except Exception as e:
+            err(str(e))
+    return True
+
+def cmd_exit(_args: str, _state, _config) -> bool:
+    ok("Goodbye!")
+    save_latest("", _state, _config)  # auto-save to mr_sessions for easy resuming
+    sys.exit(0)
+
+def cmd_memory(args: str, _state, _config) -> bool:
+    from memory import search_memory, load_index
+    from memory.scan import scan_all_memories, format_memory_manifest, memory_freshness_text
+
+    if args.strip():
+        results = search_memory(args.strip())
+        if not results:
+            info(f"No memories matching '{args.strip()}'")
+            return True
+        info(f"  {len(results)} result(s) for '{args.strip()}':")
+        for m in results:
+            info(f"  [{m.type:9s}|{m.scope:7s}] {m.name}: {m.description}")
+            info(f"    {m.content[:120]}{'...' if len(m.content) > 120 else ''}")
+        return True
+
+    # Show manifest with age/freshness
+    headers = scan_all_memories()
+    if not headers:
+        info("No memories stored. The model saves memories via MemorySave.")
+        return True
+    info(f"  {len(headers)} memory/memories (newest first):")
+    for h in headers:
+        fresh_warn = "  ⚠ stale" if memory_freshness_text(h.mtime_s) else ""
+        tag = f"[{h.type or '?':9s}|{h.scope:7s}]"
+        info(f"  {tag} {h.filename}{fresh_warn}")
+        if h.description:
+            info(f"    {h.description}")
+    return True
+
+def cmd_skills(_args: str, _state, _config) -> bool:
+    from skill import load_skills
+    skills = load_skills()
+    if not skills:
+        info("No skills found.")
+        return True
+    info(f"Available skills ({len(skills)}):")
+    for s in skills:
+        triggers = ", ".join(s.triggers)
+        source_label = f"[{s.source}]" if s.source != "builtin" else ""
+        hint = f"  args: {s.argument_hint}" if s.argument_hint else ""
+        print(f"  {clr(s.name, 'cyan'):24s} {s.description}  {clr(triggers, 'dim')}{hint} {clr(source_label, 'yellow')}")
+        if s.when_to_use:
+            print(f"    {clr(s.when_to_use[:80], 'dim')}")
+    return True
+
+
+
+
+COMMANDS = {
+    "help":        cmd_help,
+    "clear":       cmd_clear,
+    "model":       cmd_model,
+    "config":      cmd_config,
+    "save":        cmd_save,
+    "load":        cmd_load,
+    "history":     cmd_history,
+    "context":     cmd_context,
+    "cost":        cmd_cost,
+    "verbose":     cmd_verbose,
+    "thinking":    cmd_thinking,
+    "permissions": cmd_permissions,
+    "cwd":         cmd_cwd,
+    "skills":      cmd_skills,
+    "memory":      cmd_memory,
+    "exit":        cmd_exit,
+    "quit":        cmd_exit,
+    "resume":      cmd_resume
+}
+
+
+def handle_slash(line: str, state, config) -> Union[bool, tuple]:
+    """Handle /command [args]. Returns True if handled, tuple (skill, args) for skill match."""
+    if not line.startswith("/"):
+        return False
+    parts = line[1:].split(None, 1)
+    if not parts:
+        return False
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    handler = COMMANDS.get(cmd)
+    if handler:
+        handler(args, state, config)
+        return True
+
+    # Fall through to skill lookup
+    from skill import find_skill
+    skill = find_skill(line)
+    if skill:
+        cmd_parts = line.strip().split(maxsplit=1)
+        skill_args = cmd_parts[1] if len(cmd_parts) > 1 else ""
+        return (skill, skill_args)
+
+    err(f"Unknown command: /{cmd}  (type /help for commands)")
+    return True
+
+
+# ── Input history setup ────────────────────────────────────────────────────
+
+def setup_readline(history_file: Path):
+    if readline is None:
+        return
+    history_enabled = True
+    try:
+        readline.read_history_file(str(history_file))
+    except FileNotFoundError:
+        pass
+    except (PermissionError, OSError):
+        # Some environments restrict access to ~/.labbench history files.
+        # Keep REPL usable by disabling persistent readline history.
+        history_enabled = False
+    readline.set_history_length(1000)
+    if history_enabled:
+        def _safe_write_history() -> None:
+            try:
+                readline.write_history_file(str(history_file))
+            except (PermissionError, OSError):
+                pass
+        atexit.register(_safe_write_history)
+
+    # Tab-complete slash commands
+    commands = [f"/{c}" for c in COMMANDS]
+    def completer(text: str, state: int):
+        matches = [c for c in commands if c.startswith(text)]
+        return matches[state] if state < len(matches) else None
+    readline.set_completer(completer)
+    readline.parse_and_bind("tab: complete")
+
+
+# ── Main REPL ──────────────────────────────────────────────────────────────
+
+def repl(config: dict, initial_prompt: str = None):
+    from config import HISTORY_FILE
+    from context import build_system_prompt
+    from agent import AgentState, run, TextChunk, ThinkingChunk, ToolStart, ToolEnd, TurnDone, PermissionRequest
+
+    setup_readline(HISTORY_FILE)
+    state = AgentState()
+    verbose = config.get("verbose", False)
+
+    # Banner
+    if not initial_prompt:
+        print_welcome_banner(config)
+
+    def run_query(user_input: str):
+        nonlocal verbose
+        verbose = config.get("verbose", False)
+
+        # Rebuild system prompt each turn (picks up cwd changes, etc.)
+        system_prompt = build_system_prompt()
+
+        print(clr("\n╭─ LabBench ", "dim") + clr("●", "green") + clr(" ─────────────────────", "dim"))
+        print(clr("│ ", "dim"), end="", flush=True)
+
+        thinking_started = False
+
+        for event in run(user_input, state, config, system_prompt):
+            if isinstance(event, TextChunk):
+                stream_text(event.text)
+
+            elif isinstance(event, ThinkingChunk):
+                if verbose:
+                    if not thinking_started:
+                        print(clr("\n  [thinking]", "dim"))
+                        thinking_started = True
+                    stream_thinking(event.text, verbose)
+
+            elif isinstance(event, ToolStart):
+                flush_response()
+                print_tool_start(event.name, event.inputs, verbose)
+
+            elif isinstance(event, PermissionRequest):
+                event.granted = ask_permission_interactive(event.description, config)
+
+            elif isinstance(event, ToolEnd):
+                print_tool_end(event.name, event.result, verbose)
+                # Print prefix for next text
+                print(clr("│ ", "dim"), end="", flush=True)
+
+            elif isinstance(event, TurnDone):
+                if verbose:
+                    print(clr(
+                        f"\n  [tokens: +{event.input_tokens} in / "
+                        f"+{event.output_tokens} out]", "dim"
+                    ))
+
+        flush_response()
+        print(clr("╰──────────────────────────────────────────────", "dim"))
+        print()
+        # Drain any AskUserQuestion prompts raised during this turn
+        from tools import drain_pending_questions
+        drain_pending_questions()
+
+    # ── Main loop ──
+    if initial_prompt:
+        try:
+            run_query(initial_prompt)
+        except KeyboardInterrupt:
+            print()
+        return
+
+    while True:
+        try:
+            cwd_short = Path.cwd().name
+            prompt = clr(f"\n[{cwd_short}] ", "dim") + clr("❯ ", "cyan", "bold")
+            user_input = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            try:
+                save_latest("", state, config)
+            except Exception as e:
+                warn(f"Auto-save failed on exit: {e}")
+            ok("Goodbye!")
+            sys.exit(0)
+
+        if not user_input:
+            continue
+
+        result = handle_slash(user_input, state, config)
+        if isinstance(result, tuple):
+            # Skill match: (SkillDef, args_str)
+            skill, skill_args = result
+            info(f"Running skill: {skill.name}" + (f" [{skill.context}]" if skill.context == "fork" else ""))
+            try:
+                from skill import substitute_arguments
+                rendered = substitute_arguments(skill.prompt, skill_args, skill.arguments)
+                run_query(f"[Skill: {skill.name}]\n\n{rendered}")
+            except KeyboardInterrupt:
+                print(clr("\n  (interrupted)", "yellow"))
+            continue
+        if result:
+            continue
+
+        try:
+            run_query(user_input)
+        except KeyboardInterrupt:
+            print(clr("\n  (interrupted)", "yellow"))
+            # Keep conversation history up to the interruption
+
+
+# ── Entry point ────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="labbench",
+        description="LabBench — terminal assistant for notebooks, data, and Python",
+        add_help=False,
+    )
+    parser.add_argument("prompt", nargs="*", help="Initial prompt (non-interactive)")
+    parser.add_argument("-p", "--print", "--print-output",
+                        dest="print_mode", action="store_true",
+                        help="Non-interactive mode: run prompt and exit")
+    parser.add_argument("-m", "--model", help="Override model")
+    parser.add_argument("--accept-all", action="store_true",
+                        help="Never ask permission (accept all operations)")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Show thinking + token counts")
+    parser.add_argument("--thinking", action="store_true",
+                        help="Enable extended thinking")
+    parser.add_argument("--version", action="store_true", help="Print version")
+    parser.add_argument("-h", "--help", action="store_true", help="Show help")
+
+    args = parser.parse_args()
+
+    if args.version:
+        print(f"LabBench v{VERSION}")
+        sys.exit(0)
+
+    if args.help:
+        print(__doc__)
+        sys.exit(0)
+
+    from config import load_config, save_config, has_api_key
+    from providers import detect_provider, PROVIDERS
+
+    config = load_config()
+
+    # Apply CLI overrides first (so key check uses the right provider)
+    if args.model:
+        config["model"] = args.model.replace(":", "/", 1)
+    if args.accept_all:
+        config["permission_mode"] = "accept-all"
+    if args.verbose:
+        config["verbose"] = True
+    if args.thinking:
+        config["thinking"] = True
+
+    # Check API key for active provider (warn only, don't block local providers)
+    if not has_api_key(config):
+        pname = detect_provider(config["model"])
+        prov  = PROVIDERS.get(pname, {})
+        env   = prov.get("api_key_env", "")
+        if env:   # local providers like ollama have no env key requirement
+            warn(f"No API key found for provider '{pname}'. "
+                 f"Set {env} or run: /config {pname}_api_key=YOUR_KEY")
+
+    initial = " ".join(args.prompt) if args.prompt else None
+    if args.print_mode and not initial:
+        err("--print requires a prompt argument")
+        sys.exit(1)
+
+    repl(config, initial_prompt=initial)
+
+
+if __name__ == "__main__":
+    main()
