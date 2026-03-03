@@ -98,3 +98,126 @@ def _format_entry_md(entry: MemoryEntry) -> str:
     """Render a MemoryEntry as a markdown file with YAML frontmatter."""
     return (
         f"---\n"
+        f"name: {entry.name}\n"
+        f"description: {entry.description}\n"
+        f"type: {entry.type}\n"
+        f"created: {entry.created}\n"
+        f"---\n"
+        f"{entry.content}\n"
+    )
+
+
+# ── Core storage operations ────────────────────────────────────────────────
+
+def save_memory(entry: MemoryEntry, scope: str = "user") -> None:
+    """Write/update a memory file and rebuild the index for that scope.
+
+    If a memory with the same name (slug) already exists, it is overwritten.
+
+    Args:
+        entry: MemoryEntry to persist
+        scope: "user" or "project"
+    """
+    mem_dir = get_memory_dir(scope)
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    slug = _slugify(entry.name)
+    fp = mem_dir / f"{slug}.md"
+    fp.write_text(_format_entry_md(entry))
+    entry.file_path = str(fp)
+    entry.scope = scope
+    _rewrite_index(scope)
+
+
+def delete_memory(name: str, scope: str = "user") -> None:
+    """Remove the memory file matching name and rebuild the index.
+
+    No error if not found.
+    """
+    mem_dir = get_memory_dir(scope)
+    slug = _slugify(name)
+    fp = mem_dir / f"{slug}.md"
+    if fp.exists():
+        fp.unlink()
+    _rewrite_index(scope)
+
+
+def load_entries(scope: str = "user") -> list[MemoryEntry]:
+    """Scan all .md files (except MEMORY.md) in a scope and return entries.
+
+    Returns:
+        List of MemoryEntry sorted alphabetically by name.
+    """
+    mem_dir = get_memory_dir(scope)
+    if not mem_dir.exists():
+        return []
+    entries: list[MemoryEntry] = []
+    for fp in sorted(mem_dir.glob("*.md")):
+        if fp.name == INDEX_FILENAME:
+            continue
+        try:
+            text = fp.read_text()
+        except Exception:
+            continue
+        meta, body = parse_frontmatter(text)
+        entries.append(MemoryEntry(
+            name=meta.get("name", fp.stem),
+            description=meta.get("description", ""),
+            type=meta.get("type", "user"),
+            content=body,
+            file_path=str(fp),
+            created=meta.get("created", ""),
+            scope=scope,
+        ))
+    return entries
+
+
+def load_index(scope: str = "all") -> list[MemoryEntry]:
+    """Load memory entries from one or both scopes.
+
+    Args:
+        scope: "user", "project", or "all" (both combined)
+
+    Returns:
+        List of MemoryEntry (user entries first, then project).
+    """
+    if scope == "all":
+        return load_entries("user") + load_entries("project")
+    return load_entries(scope)
+
+
+def search_memory(query: str, scope: str = "all") -> list[MemoryEntry]:
+    """Case-insensitive keyword match on name + description + content.
+
+    Returns:
+        List of matching MemoryEntry objects.
+    """
+    q = query.lower()
+    results = []
+    for entry in load_index(scope):
+        haystack = f"{entry.name} {entry.description} {entry.content}".lower()
+        if q in haystack:
+            results.append(entry)
+    return results
+
+
+def _rewrite_index(scope: str) -> None:
+    """Rebuild MEMORY.md for the given scope from all .md files in that dir."""
+    mem_dir = get_memory_dir(scope)
+    if not mem_dir.exists():
+        return
+    index_path = mem_dir / INDEX_FILENAME
+    entries = load_entries(scope)
+    lines = [
+        f"- [{e.name}]({Path(e.file_path).name}) — {e.description}"
+        for e in entries
+    ]
+    index_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+
+
+def get_index_content(scope: str = "user") -> str:
+    """Return raw MEMORY.md content for the given scope, or '' if absent."""
+    mem_dir = get_memory_dir(scope)
+    index_path = mem_dir / INDEX_FILENAME
+    if not index_path.exists():
+        return ""
+    return index_path.read_text().strip()
