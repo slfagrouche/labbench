@@ -95,3 +95,122 @@ register_tool(ToolDef(
         ),
         "input_schema": {
             "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable name (becomes the filename slug)",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["user", "feedback", "project", "reference"],
+                    "description": (
+                        "user=preferences/role, feedback=guidance on how to work, "
+                        "project=ongoing work/decisions, reference=external system pointers"
+                    ),
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Short one-line description (used for relevance decisions — be specific)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Body text. For feedback/project: rule/fact + **Why:** + **How to apply:**",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["user", "project"],
+                    "description": (
+                        "'user' (default) = ~/.labbench/memory/ shared across projects; "
+                        "'project' = .labbench/memory/ local to this project"
+                    ),
+                },
+            },
+            "required": ["name", "type", "description", "content"],
+        },
+    },
+    func=_memory_save,
+    read_only=False,
+    concurrent_safe=False,
+))
+
+register_tool(ToolDef(
+    name="MemoryDelete",
+    schema={
+        "name": "MemoryDelete",
+        "description": "Delete a persistent memory entry by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the memory to delete"},
+                "scope": {
+                    "type": "string",
+                    "enum": ["user", "project"],
+                    "description": "Scope to delete from (default: 'user')",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    func=_memory_delete,
+    read_only=False,
+    concurrent_safe=False,
+))
+
+register_tool(ToolDef(
+    name="MemorySearch",
+    schema={
+        "name": "MemorySearch",
+        "description": (
+            "Search persistent memories by keyword. Returns matching entries with "
+            "content preview and staleness warning for old memories. "
+            "Set use_ai=true to use AI-powered relevance ranking (costs a small API call)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 5)",
+                },
+                "use_ai": {
+                    "type": "boolean",
+                    "description": "Use AI relevance ranking (default: false = keyword only)",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["user", "project", "all"],
+                    "description": "Which scope to search (default: 'all')",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    func=_memory_search,
+    read_only=True,
+    concurrent_safe=True,
+))
+
+register_tool(ToolDef(
+    name="MemoryList",
+    schema={
+        "name": "MemoryList",
+        "description": (
+            "List all memory entries with type, scope, age, and description. "
+            "Useful for reviewing what's been remembered before deciding to save or delete."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["user", "project", "all"],
+                    "description": "Which scope to list (default: 'all')",
+                },
+            },
+        },
+    },
+    func=_memory_list,
+    read_only=True,
+    concurrent_safe=True,
+))
