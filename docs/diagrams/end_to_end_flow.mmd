@@ -1,0 +1,8 @@
+flowchart LR
+    U[User] --> CLI[CLI / REPL]
+    CLI --> A[Agent Loop]
+    A --> P[Model Provider]
+    A --> T[Tool Registry + Tools]
+    T --> M[Memory + Skills]
+    A --> G[Permission Gate]
+    G --> R[Final Response]
