@@ -1,0 +1,10 @@
+flowchart TD
+    LB[labbench.py] --> AG[agent.py]
+    AG --> PR[providers.py]
+    AG --> TR[tool_registry.py]
+    TR --> TO[tools.py]
+    TO --> MEM[memory/]
+    TO --> SK[skill/]
+    LB --> CTX[context.py]
+    LB --> CFG[config.py]
+    AG --> CMP[compaction.py]
