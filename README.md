@@ -17,12 +17,10 @@ It is intentionally compact, with practical safeguards and operational features 
 ### Runtime conversation example
 
 ![LabBench runtime example](docs/screenshots/runtime-example.png)
-[Open full image](docs/screenshots/runtime-example.png)
 
 ### Built-in help and command surface
 
 ![LabBench help screen](docs/screenshots/help-screen.png)
-[Open full image](docs/screenshots/help-screen.png)
 
 ## Quick Start
 
