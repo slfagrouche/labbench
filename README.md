@@ -1,5 +1,7 @@
 # LabBench
 
+![LabBench logo](docs/branding/labbench-logo.png)
+
 LabBench is an open-source, production-oriented terminal AI assistant for Python, notebooks, and data workflows.
 It is intentionally compact, with practical safeguards and operational features for real projects.
 
