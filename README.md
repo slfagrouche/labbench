@@ -25,12 +25,9 @@ It is intentionally compact, with practical safeguards and operational features 
 ## Quick Start
 
 ```bash
-git clone https://github.com/slfagrouche/labbench.git labbench
-cd labbench
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-python3 -m pip install -r requirements.txt
-python3 labbench.py
+python3 -m pip install --upgrade pip
+python3 -m pip install labbench-cli
+labbench
 ```
 
 Set one of these API keys before first run (depending on provider):
@@ -38,29 +35,41 @@ Set one of these API keys before first run (depending on provider):
 - `OPENAI_API_KEY`
 - provider-specific keys for other backends in `providers.py`
 
+### Source install (development)
+
+```bash
+git clone https://github.com/slfagrouche/labbench.git labbench
+cd labbench
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+labbench
+```
+
 ## Production Usage
 
 ### Interactive (default REPL)
 
 ```bash
-python3 labbench.py
+labbench
 ```
 
 ### Interactive with explicit provider/model
 
 ```bash
-python3 labbench.py -m claude-opus-4-6
-python3 labbench.py -m gpt-4o
-python3 labbench.py -m gemini-2.0-flash
-python3 labbench.py -m ollama/qwen2.5-coder
-python3 labbench.py -m custom/my-model
+labbench -m claude-opus-4-6
+labbench -m gpt-4o
+labbench -m gemini-2.0-flash
+labbench -m ollama/qwen2.5-coder
+labbench -m custom/my-model
 ```
 
 ### One-shot mode (automation, scripts, CI)
 
 ```bash
-python3 labbench.py -p "Summarize this pull request"
-python3 labbench.py -m gpt-4o -p "Draft release notes from git history"
+labbench -p "Summarize this pull request"
+labbench -m gpt-4o -p "Draft release notes from git history"
 ```
 
 ### Operational flags
@@ -135,6 +144,7 @@ Interpretation:
 - `skill/` skill parsing, built-ins, and skill tools
 - `context.py` system prompt assembly
 - `config.py` config/session persistence
+- `pyproject.toml` package metadata and CLI entrypoint
 
 ## Configuration and State
 
@@ -154,6 +164,21 @@ LabBench can run shell commands and edit files. Safety is enforced via:
 Always review before enabling `--accept-all` in sensitive environments.
 
 ## Troubleshooting
+
+### `labbench: command not found`
+
+Install the package first (or reinstall into your environment):
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install labbench-cli
+```
+
+If you are running from source without installing, use:
+
+```bash
+python3 labbench.py
+```
 
 ### `python: command not found`
 
@@ -188,7 +213,11 @@ Run tests:
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests/ -v
+python3 -m pip install build
+python3 -m build
 ```
+
+PyPI publishing is configured via GitHub Actions in `.github/workflows/publish-pypi.yml`.
 
 Docs:
 - Architecture: [docs/architecture.md](docs/architecture.md)

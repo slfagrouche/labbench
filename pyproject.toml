@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labbench-cli"
+dynamic = ["version"]
+description = "Production-grade terminal AI assistant for Python, notebooks, and data workflows."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+  { name = "LabBench contributors" }
+]
+keywords = ["cli", "ai", "assistant", "python", "notebooks", "terminal", "data"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Utilities"
+]
+dependencies = [
+  "anthropic>=0.40.0",
+  "openai>=1.30.0",
+  "httpx>=0.27.0",
+  "rich>=13.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/slfagrouche/labbench"
+Repository = "https://github.com/slfagrouche/labbench"
+Issues = "https://github.com/slfagrouche/labbench/issues"
+
+[project.scripts]
+labbench = "labbench:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "labbench.VERSION" }
+
+[tool.setuptools]
+py-modules = [
+  "labbench",
+  "agent",
+  "compaction",
+  "config",
+  "context",
+  "memory",
+  "providers",
+  "subagent",
+  "tool_registry",
+  "tools"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memory*", "skill*"]
