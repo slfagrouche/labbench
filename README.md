@@ -10,23 +10,17 @@ It is intentionally compact, with practical safeguards and operational features 
 - Supports hosted and local model providers through one interface
 - Includes permission controls, tool safety gates, memory, skills, diagnostics, and tests
 
-## Visual Architecture
+## Interface Preview
 
-### 1) End-to-end flow
+### Runtime conversation example
 
-![End-to-end flow](docs/diagrams/end_to_end_flow.png)
+![LabBench runtime example](docs/screenshots/runtime-example.png)
+[Open full image](docs/screenshots/runtime-example.png)
 
-Interpretation:
-- Non-technical: user asks, system runs safely, user gets result.
-- Technical: agent orchestrates provider calls, tool execution, memory/skills, and permission checks.
+### Built-in help and command surface
 
-### 2) Permission model (production safety)
-
-![Permission model](docs/diagrams/permission_model.png)
-
-### 3) Runtime components (technical map)
-
-![Runtime components](docs/diagrams/runtime_components.png)
+![LabBench help screen](docs/screenshots/help-screen.png)
+[Open full image](docs/screenshots/help-screen.png)
 
 ## Quick Start
 
@@ -43,30 +37,6 @@ Set one of these API keys before first run (depending on provider):
 - `ANTHROPIC_API_KEY`
 - `OPENAI_API_KEY`
 - provider-specific keys for other backends in `providers.py`
-
-## Supported Providers
-
-LabBench supports both hosted and local providers through a unified interface.
-
-### Hosted providers
-- `anthropic` (Claude)
-- `openai` (GPT/o-series)
-- `gemini` (Google Gemini via OpenAI-compatible endpoint)
-- `kimi` (Moonshot)
-- `qwen` (DashScope)
-- `zhipu` (GLM)
-- `deepseek` (DeepSeek)
-- `custom` (any OpenAI-compatible API via `custom/<model>`)
-
-### Local/self-hosted providers
-- `ollama` (local server, no cloud key required)
-- `lmstudio` (local server, no cloud key required)
-
-Use either:
-- Auto-detected model names (example: `claude-opus-4-6`, `gpt-4o`)
-- Explicit prefix form (example: `ollama/qwen2.5-coder`, `custom/my-model`)
-
-For exact env var mapping and defaults, see `providers.py`.
 
 ## Production Usage
 
@@ -101,6 +71,30 @@ python3 labbench.py -m gpt-4o -p "Draft release notes from git history"
 - `--thinking` enable extended reasoning where supported
 - `--accept-all` disable permission prompts (high trust mode; use cautiously)
 
+## Supported Providers
+
+LabBench supports both hosted and local providers through a unified interface.
+
+### Hosted providers
+- `anthropic` (Claude)
+- `openai` (GPT/o-series)
+- `gemini` (Google Gemini via OpenAI-compatible endpoint)
+- `kimi` (Moonshot)
+- `qwen` (DashScope)
+- `zhipu` (GLM)
+- `deepseek` (DeepSeek)
+- `custom` (any OpenAI-compatible API via `custom/<model>`)
+
+### Local/self-hosted providers
+- `ollama` (local server, no cloud key required)
+- `lmstudio` (local server, no cloud key required)
+
+Use either:
+- Auto-detected model names (example: `claude-opus-4-6`, `gpt-4o`)
+- Explicit prefix form (example: `ollama/qwen2.5-coder`, `custom/my-model`)
+
+For exact env var mapping and defaults, see `providers.py`.
+
 ## Core Capabilities
 
 - File and shell tooling (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`)
@@ -111,6 +105,24 @@ python3 labbench.py -m gpt-4o -p "Draft release notes from git history"
 - Persistent memory (`memory/`)
 - Markdown skills (`skill/`)
 - Context compaction for long sessions (`compaction.py`)
+
+## Visual Architecture
+
+### 1) End-to-end flow
+
+![End-to-end flow](docs/diagrams/end_to_end_flow.png)
+
+Interpretation:
+- Non-technical: user asks, system runs safely, user gets result.
+- Technical: agent orchestrates provider calls, tool execution, memory/skills, and permission checks.
+
+### 2) Permission model (production safety)
+
+![Permission model](docs/diagrams/permission_model.png)
+
+### 3) Runtime components (technical map)
+
+![Runtime components](docs/diagrams/runtime_components.png)
 
 ## Project Layout
 
@@ -141,15 +153,6 @@ LabBench can run shell commands and edit files. Safety is enforced via:
 
 Always review before enabling `--accept-all` in sensitive environments.
 
-## Development
-
-Run tests:
-
-```bash
-python3 -m pip install -r requirements-dev.txt
-python3 -m pytest tests/ -v
-```
-
 ## Troubleshooting
 
 ### `python: command not found`
@@ -177,6 +180,15 @@ python3 -m pip install -r requirements.txt
 
 Recent versions of LabBench handle restricted history-file permissions gracefully. If you still see this,
 pull latest `main` and rerun.
+
+## Development
+
+Run tests:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest tests/ -v
+```
 
 Docs:
 - Architecture: [docs/architecture.md](docs/architecture.md)
